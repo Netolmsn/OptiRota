@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard de Otimização de Rotas (VRPTW)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for tab visibility and component height */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .tab-content {
+            display: none;
+            min-height: 80vh;
+        }
+        /* Override Tailwind's default display property when setting display: block with JS */
+        .tab-content[style*="display: block"] {
+            display: block;
+        }
+        iframe {
+            height: 80vh; /* Responsive height for the visualization area */
+        }
+        .tab-button.active {
+            color: #1d4ed8; /* blue-700 */
+            border-bottom: 3px solid #1d4ed8;
+            font-weight: 700;
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <!-- Seção de Parâmetros de Simulação (Topo) -->
+    <div id="parameter-bar" class="bg-white p-4 shadow-md flex flex-wrap justify-between items-center gap-4">
+        <h3 class="text-lg font-semibold text-gray-700">Parâmetros de Simulação:</h3>
+        
+        <div class="flex flex-wrap items-center gap-4">
+            <!-- Capacidade -->
+            <label class="flex flex-col text-sm font-medium text-gray-600">
+                Capacidade (un.):
+                <input type="number" id="capacity" value="20" min="1" class="mt-1 p-2 border border-gray-300 rounded-md w-24 focus:ring-blue-500 focus:border-blue-500">
+            </label>
+            
+            <!-- Velocidade -->
+            <label class="flex flex-col text-sm font-medium text-gray-600">
+                Velocidade (km/min):
+                <input type="number" id="speed" value="1.0" step="0.1" class="mt-1 p-2 border border-gray-300 rounded-md w-24 focus:ring-blue-500 focus:border-blue-500">
+            </label>
+            
+            <!-- Custo/km -->
+            <label class="flex flex-col text-sm font-medium text-gray-600">
+                Custo/km (R$):
+                <input type="number" id="cost_km" value="0.5" step="0.1" class="mt-1 p-2 border border-gray-300 rounded-md w-24 focus:ring-blue-500 focus:border-blue-500">
+            </label>
+            
+            <!-- Botão de Recálculo -->
+            <button onclick="recalculateOptimization()" class="mt-auto bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-200">
+                Recalcular e Atualizar
+            </button>
+        </div>
+        
+        <!-- Mensagem de Status -->
+        <span id="statusMessage" class="text-blue-600 font-semibold text-sm">Aguardando parâmetros...</span>
+    </div>
+
+    <!-- Menu de Abas -->
+    <div class="tab-menu bg-white px-4 shadow-lg flex items-center border-b-2 border-blue-600 mt-1">
+        <h2 class="text-xl font-bold text-gray-800 py-3 flex-grow">Dashboard VRPTW</h2>
+        
+        <!-- Botões de Aba -->
+        <button class="tab-button active py-3 px-6 text-gray-500 font-medium transition duration-200 hover:text-blue-700" onclick="openTab(event, 'Rotas')">
+            🗺️ Mapa de Rotas Otimizadas
+        </button>
+        <button class="tab-button py-3 px-6 text-gray-500 font-medium transition duration-200 hover:text-blue-700" onclick="openTab(event, 'Gantt')">
+            ⏱️ Gráfico de Gantt (Cronograma)
+        </button>
+    </div>
+
+    <!-- Conteúdo das Abas -->
+    <div class="tab-container p-4">
+        
+        <!-- Aba 1: Mapa de Rotas -->
+        <div id="Rotas" class="tab-content bg-white p-2 rounded-xl shadow-inner border border-gray-200" style="display: block;">
+            <iframe src="rotas_otimizadas.html" class="w-full rounded-lg"></iframe> 
+        </div>
+
+        <!-- Aba 2: Gráfico de Gantt -->
+        <div id="Gantt" class="tab-content bg-white p-2 rounded-xl shadow-inner border border-gray-200">
+            <iframe src="gantt_schedule_aprimorado.html" class="w-full rounded-lg"></iframe>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * Lógica para trocar a aba ativa no dashboard.
+         * @param {Event} evt O evento de clique.
+         * @param {string} tabName O ID da aba a ser exibida.
+         */
+        function openTab(evt, tabName) {
+            let i, tabContent, tabButton;
+
+            // Esconde todo o conteúdo da aba
+            tabContent = document.getElementsByClassName("tab-content");
+            for (i = 0; i < tabContent.length; i++) {
+                tabContent[i].style.display = "none";
+            }
+
+            // Remove a classe 'active' de todos os botões
+            tabButton = document.getElementsByClassName("tab-button");
+            for (i = 0; i < tabButton.length; i++) {
+                tabButton[i].classList.remove("active");
+            }
+
+            // Exibe a aba atual e adiciona a classe 'active' ao botão clicado
+            document.getElementById(tabName).style.display = "block";
+            evt.currentTarget.classList.add("active");
+        }
+
+        /**
+         * Função para enviar os parâmetros de otimização ao backend e forçar o recarregamento dos iframes.
+         */
+        function recalculateOptimization() {
+            // Obtém os valores dos inputs
+            const capacity = document.getElementById('capacity').value;
+            const speed = document.getElementById('speed').value;
+            const cost_km = document.getElementById('cost_km').value;
+            const statusElement = document.getElementById('statusMessage');
+
+            statusElement.textContent = "⚙️ Rodando Tabu Search, aguarde...";
+            statusElement.classList.remove('text-red-600', 'text-green-600');
+            statusElement.classList.add('text-blue-600');
+            
+            // Faz a requisição POST para o endpoint de otimização
+            fetch('/optimize', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ capacity: Number(capacity), speed: Number(speed), cost_km: Number(cost_km) })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.status === 'success') {
+                    // Atualiza a mensagem de sucesso
+                    statusElement.textContent = `✅ Sucesso! Novo Custo Final: ${data.final_cost}. Atualizando gráficos...`;
+                    statusElement.classList.remove('text-blue-600');
+                    statusElement.classList.add('text-green-600');
+                    
+                    // Força o recarregamento dos iframes para mostrar os novos resultados
+                    setTimeout(() => {
+                        const newTimestamp = new Date().getTime();
+                        
+                        const mapFrame = document.getElementById('Rotas').querySelector('iframe');
+                        // Adiciona um timestamp único ao SRC para garantir o reload (cache bust)
+                        mapFrame.src = 'rotas_otimizadas.html?' + newTimestamp;
+
+                        const ganttFrame = document.getElementById('Gantt').querySelector('iframe');
+                        ganttFrame.src = 'gantt_schedule_aprimorado.html?' + newTimestamp;
+                    }, 200);
+
+                } else {
+                    statusElement.textContent = `❌ Erro na otimização: ${data.message || 'Resposta inválida do servidor.'}`;
+                    statusElement.classList.remove('text-blue-600', 'text-green-600');
+                    statusElement.classList.add('text-red-600');
+                }
+            })
+            .catch(error => {
+                // Lida com erros de rede ou de requisição
+                console.error('Erro durante a otimização:', error);
+                statusElement.textContent = `❌ Erro de Conexão/Sistema: ${error.message}`;
+                statusElement.classList.remove('text-blue-600', 'text-green-600');
+                statusElement.classList.add('text-red-600');
+            });
+        }
+    </script>
+</body>
