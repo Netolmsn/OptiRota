@@ -454,3 +454,229 @@ fig.show()
 fig.write_html("rotas_otimizadas.html")
 print("\nArquivo 'rotas_otimizadas.html' gerado com sucesso!")
 
+def two_opt_optimize(routes):
+    """Aplica o algoritmo 2-opt a cada rota para otimizar o custo (busca local)."""
+    optimized_routes = {}
+    
+    for route_id, route in routes.items():
+        best_route = route
+        best_cost, _, _ = avaliar_rota(best_route)
+        
+        melhoria_encontrada = True
+        while melhoria_encontrada:
+            melhoria_encontrada = False
+            n = len(best_route)
+            
+            if n < 4:
+                optimized_routes[route_id] = best_route
+                break
+            
+            for i in range(1, n - 2):
+                for k in range(i + 1, n - 1):
+                    new_route = best_route[:i] + best_route[k:i-1:-1] + best_route[k+1:]
+                    
+                    new_cost, capacidade_ok, tw_ok = avaliar_rota(new_route)
+                    
+                    if new_cost < best_cost and capacidade_ok and tw_ok:
+                        best_route = new_route
+                        best_cost = new_cost
+                        melhoria_encontrada = True
+                        break
+                if melhoria_encontrada:
+                    break
+            
+        optimized_routes[route_id] = best_route
+        
+    return optimized_routes
+
+rotas_otimizadas_2opt = two_opt_optimize(rotas_finais)
+
+print("\n--- Resultado Otimizado (2-opt) ---")
+print(f"Total de Rotas Otimizadas: {len(rotas_otimizadas_2opt)}")
+
+custo_total_2opt = 0
+for idx, rota in rotas_otimizadas_2opt.items():
+    custo, cap_ok, tw_ok = avaliar_rota(rota)
+    
+    demanda = sum(df_clientes.iloc[no]['Demanda'] for no in rota if no != 0)
+    
+    status_tw = "OK" if tw_ok else "VIOLADO"
+    status_cap = "OK" if cap_ok else "VIOLADO"
+    
+    print(f"Veículo {idx} | Clientes: {rota} | Demanda: {demanda}/{CAPACIDADE_VEICULO} ({status_cap}) | Custo: R$ {custo:.2f} | TW: {status_tw}")
+    custo_total_2opt += custo
+
+print(f"\nCUSTO TOTAL FINAL 2-opt: R$ {custo_total_2opt:.2f}")
+
+gantt_data = []
+tw_data = []
+idx_veiculo = 1
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+def calcular_cronograma(rota):
+    
+    custo_total, capacidade_ok, tw_valida = avaliar_rota(rota)
+    
+    if not capacidade_ok or custo_total == 999999:
+        return (custo_total, False, [])
+
+    eventos = []
+    tempo_atual_min = START_DEPOT_MIN 
+    
+    eventos.append({
+        'Veiculo': 'TEMP', 
+        'Task': f"Depósito (Partida)", 
+        'Start': tempo_atual_min, 
+        'Finish': tempo_atual_min, 
+        'Cor': 'saida'
+    })
+    
+    for i in range(len(rota) - 1):
+        origem = rota[i]
+        destino = rota[i+1]
+        
+        distancia_km = dist_matrix[origem, destino]
+        tempo_viagem_min = distancia_km / VELOCIDADE_MEDIA_KM_MIN
+        
+        tempo_chegada = tempo_atual_min + tempo_viagem_min
+        
+        eventos.append({
+            'Veiculo': 'TEMP',
+            'Task': f"Viagem {df_clientes.iloc[origem]['ID']}->{df_clientes.iloc[destino]['ID']}",
+            'Start': tempo_atual_min,
+            'Finish': tempo_chegada,
+            'Cor': 'viagem'
+        })
+        
+        if destino != 0:
+            t_inicio_min = df_clientes.iloc[destino]['T_Inicio_h'] * 60
+            t_fim_min = df_clientes.iloc[destino]['T_Fim_h'] * 60
+            
+            tempo_espera = 0
+            
+            if tempo_chegada < t_inicio_min:
+                tempo_espera = t_inicio_min - tempo_chegada
+                tempo_inicio_servico = t_inicio_min
+                cor_servico = 'espera'
+            elif tempo_chegada > t_fim_min:
+                tempo_inicio_servico = tempo_chegada
+                cor_servico = 'atraso'
+            else:
+                tempo_inicio_servico = tempo_chegada
+                cor_servico = 'ok'
+
+            if tempo_espera > 0:
+                  eventos.append({
+                      'Veiculo': 'TEMP', 
+                      'Task': f"Espera {df_clientes.iloc[destino]['ID']}", 
+                      'Start': tempo_chegada, 
+                      'Finish': tempo_inicio_servico,
+                      'Cor': 'espera'
+                  })
+
+            tempo_saida = tempo_inicio_servico + TEMPO_SERVICO_MIN
+            
+            eventos.append({
+                'Veiculo': 'TEMP', 
+                'Task': f"Serviço {df_clientes.iloc[destino]['ID']} (TW: {t_inicio_min}-{t_fim_min}min)",
+                'Start': tempo_inicio_servico,
+                'Finish': tempo_saida,
+                'Cor': cor_servico
+            })
+            
+            tempo_atual_min = tempo_saida
+            
+        else:
+            tempo_atual_min = tempo_chegada
+            eventos.append({
+                'Veiculo': 'TEMP', 
+                'Task': "Depósito (Chegada)", 
+                'Start': tempo_chegada, 
+                'Finish': tempo_chegada,
+                'Cor': 'saida'
+            })
+    
+    return (custo_total, tw_valida, eventos)
+
+# A variável de entrada deve ser 'rotas_finais' ou a variável pós-otimização, ex: rotas_otimizadas_2opt
+rotas_de_entrada = rotas_finais 
+
+gantt_data = []
+tw_data = []
+idx_veiculo = 1
+
+for rota_id, rota in rotas_de_entrada.items():
+    _, _, eventos = calcular_cronograma(rota)
+    
+    for evento in eventos:
+        evento['Veiculo'] = f"V{idx_veiculo}"
+        gantt_data.append(evento)
+    
+    for no in rota[1:-1]:
+        cliente_info = df_clientes.iloc[no]
+        
+        tw_data.append({
+            'Veiculo': f"V{idx_veiculo}",
+            'Cliente_ID': cliente_info['ID'],
+            'Start_TW': cliente_info['T_Inicio_h'] * 60,
+            'Finish_TW': cliente_info['T_Fim_h'] * 60,
+            'Label': f"TW: {cliente_info['ID']}"
+        })
+        
+    idx_veiculo += 1
+
+df_gantt = pd.DataFrame(gantt_data)
+df_tw = pd.DataFrame(tw_data)
+
+color_map = {
+    'viagem': 'rgba(128, 128, 128, 0.5)',
+    'ok': '#1f77b4',
+    'espera': '#ff7f0e',
+    'atraso': '#d62728',
+    'saida': '#000000'
+}
+
+fig_gantt = px.timeline(
+    df_gantt[df_gantt['Task'].str.contains("Serviço|Espera|Viagem")],
+    x_start="Start", 
+    x_end="Finish", 
+    y="Veiculo", 
+    color="Cor", 
+    color_discrete_map=color_map,
+    title="Gráfico de Gantt Detalhado com Janelas de Tempo",
+    hover_name="Task",
+    opacity=0.8
+)
+
+for veiculo in df_tw['Veiculo'].unique():
+    df_tw_veiculo = df_tw[df_tw['Veiculo'] == veiculo]
+    
+    fig_gantt.add_trace(
+        go.Bar(
+            y=df_tw_veiculo['Veiculo'],
+            x=df_tw_veiculo['Finish_TW'] - df_tw_veiculo['Start_TW'],
+            base=df_tw_veiculo['Start_TW'],
+            name=f"Janela TW - {veiculo}",
+            marker_color='rgba(0, 255, 0, 0.15)',
+            hovertemplate='Cliente: %{customdata[0]}<br>Janela: %{base} - %{x}<extra></extra>',
+            customdata=df_tw_veiculo[['Cliente_ID']],
+            orientation='h',
+            showlegend=False
+        )
+    )
+
+fig_gantt.update_traces(orientation='h', selector=dict(type='bar'), showlegend=True)
+
+fig_gantt.update_yaxes(categoryorder="array", categoryarray=sorted(df_gantt['Veiculo'].unique()))
+
+fig_gantt.update_xaxes(title="Tempo (Minutos do dia - Ex: 480 min = 8:00)",
+                       tickvals=list(range(480, 1021, 60)),
+                       ticktext=[f"{h//60}:00" for h in range(480, 1021, 60)])
+
+fig_gantt.show()
+
+fig_gantt.write_html("gantt_schedule_aprimorado.html")
+print("\nArquivo 'gantt_schedule_aprimorado.html' gerado com sucesso!")
