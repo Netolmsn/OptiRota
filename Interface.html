@@ -9,33 +9,15 @@
         body {
             font-family: 'Inter', sans-serif;
         }
-        .tab-content {
-            display: none;
-            min-height: 80vh;
-        }
-        .tab-button {
-            border-bottom: 3px solid transparent;
-        }
+        .tab-content { display: none; min-height: 80vh; }
+        .tab-button { border-bottom: 3px solid transparent; }
         .tab-button.active {
             color: #1d4ed8;
             border-bottom: 3px solid #1d4ed8;
             font-weight: 700;
         }
-        iframe {
-            height: calc(100vh - 180px); 
-        }
+        iframe { height: calc(100vh - 180px); }
     </style>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                    },
-                },
-            }
-        }
-    </script>
 </head>
 <body class="bg-gray-100 text-gray-800">
 
@@ -80,110 +62,84 @@
     <div class="tab-container p-4">
         
         <div id="Rotas" class="tab-content bg-white p-2 rounded-xl shadow-xl border border-gray-200" style="display: block;">
-            <iframe id="mapFrame" src="rotas_otimizadas.html" class="w-full rounded-lg"></iframe> 
+            <iframe id="mapFrame" src="/rotas_otimizadas" class="w-full rounded-lg"></iframe> 
         </div>
 
         <div id="Gantt" class="tab-content bg-white p-2 rounded-xl shadow-xl border border-gray-200">
-            <iframe id="ganttFrame" src="gantt_schedule_aprimorado.html" class="w-full rounded-lg"></iframe>
+            <iframe id="ganttFrame" src="/gantt_schedule" class="w-full rounded-lg"></iframe>
         </div>
     </div>
 
+    <aside style="position:fixed; right:0; top:0; width:300px; height:100%; background:#f4f4f4; padding:20px; box-shadow:-2px 0 5px rgba(0,0,0,0.1);">
+      <h2>Adicionar Cliente</h2>
+      <form id="clienteForm">
+        <label>ID: <input name="ID" required></label><br>
+        <label>Lat: <input name="Lat" type="number" step="any" required></label><br>
+        <label>Lon: <input name="Lon" type="number" step="any" required></label><br>
+        <label>Demanda: <input name="Demanda" type="number" required></label><br>
+        <label>Início (h): <input name="T_Inicio_h" type="number" required></label><br>
+        <label>Fim (h): <input name="T_Fim_h" type="number" required></label><br>
+        <button type="submit">Enviar</button>
+      </form>
+      <div id="status"></div>
+    </aside>
+
     <script>
-
         function openTab(evt, tabName) {
-            let i, tabContent, tabButton;
-
-            tabContent = document.getElementsByClassName("tab-content");
-            for (i = 0; i < tabContent.length; i++) {
-                tabContent[i].style.display = "none";
-            }
-
-            tabButton = document.getElementsByClassName("tab-button");
-            for (i = 0; i < tabButton.length; i++) {
-                tabButton[i].classList.remove("active");
-            }
-
+            document.querySelectorAll(".tab-content").forEach(el => el.style.display = "none");
+            document.querySelectorAll(".tab-button").forEach(el => el.classList.remove("active"));
             document.getElementById(tabName).style.display = "block";
             evt.currentTarget.classList.add("active");
         }
 
-        function recalculateOptimization() {
-            const capacity = document.getElementById('capacity').value;
-            const speed = document.getElementById('speed').value;
-            const cost_km = document.getElementById('cost_km').value;
-            const statusElement = document.getElementById('statusMessage');
-            const optimizeButton = document.querySelector('button[onclick="recalculateOptimization()"]');
+        async function recalculateOptimization() {
+            const params = {
+                capacity: Number(document.getElementById('capacity').value),
+                speed: Number(document.getElementById('speed').value),
+                cost_km: Number(document.getElementById('cost_km').value)
+            };
+            const statusEl = document.getElementById('statusMessage');
+            statusEl.textContent = "⚙️ Otimizando rotas...";
+            statusEl.className = "text-blue-600 font-semibold text-sm";
 
-            optimizeButton.disabled = true; 
-            
-            statusElement.textContent = "⚙️ Rodando Tabu Search, aguarde...";
-            statusElement.classList.remove('text-red-600', 'text-green-600');
-            statusElement.classList.add('text-blue-600');
-            
-            fetch('/optimize', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ capacity: Number(capacity), speed: Number(speed), cost_km: Number(cost_km) })
-            })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            })
-            .then(data => {
-                optimizeButton.disabled = false; 
+            try {
+                const res = await fetch('/optimize', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify(params)
+                });
+                const data = await res.json();
 
                 if (data.status === 'success') {
-                    statusElement.textContent = `✅ Sucesso! Novo Custo Final: ${data.final_cost}. Atualizando gráficos...`;
-                    statusElement.classList.remove('text-blue-600');
-                    statusElement.classList.add('text-green-600');
-                    
-                    setTimeout(() => {
-                        const newTimestamp = new Date().getTime();
-                        
-                        const mapFrame = document.getElementById('mapFrame');
-                        mapFrame.src = 'rotas_otimizadas.html?' + newTimestamp;
-
-                        const ganttFrame = document.getElementById('ganttFrame');
-                        ganttFrame.src = 'gantt_schedule_aprimorado.html?' + newTimestamp;
-                        
-                        setTimeout(() => {
-                            statusElement.textContent = `Último Custo Calculado: ${data.final_cost}`;
-                            statusElement.classList.remove('text-green-600');
-                            statusElement.classList.add('text-blue-600');
-                        }, 1000);
-                        
-                    }, 500); 
-
+                    statusEl.textContent = `✅ Custo final: R$ ${data.final_cost.toFixed(2)} — gráficos atualizados.`;
+                    statusEl.className = "text-green-600 font-semibold text-sm";
+                    const t = new Date().getTime();
+                    document.getElementById('mapFrame').src = '/rotas_otimizadas?t='+t;
+                    document.getElementById('ganttFrame').src = '/gantt_schedule?t='+t;
                 } else {
-                    statusElement.textContent = `❌ Erro na otimização: ${data.message || 'Resposta inválida do servidor.'}`;
-                    statusElement.classList.remove('text-blue-600', 'text-green-600');
-                    statusElement.classList.add('text-red-600');
+                    statusEl.textContent = "❌ Erro: " + data.message;
+                    statusEl.className = "text-red-600 font-semibold text-sm";
                 }
-            })
-            .catch(error => {
-                optimizeButton.disabled = false; 
-                console.error('Erro durante a otimização:', error);
-                statusElement.textContent = `❌ Erro de Conexão/Sistema: ${error.message}`;
-                statusElement.classList.remove('text-blue-600', 'text-green-600');
-                statusElement.classList.add('text-red-600');
-            });
+            } catch (err) {
+                statusEl.textContent = "❌ Falha na conexão: " + err.message;
+                statusEl.className = "text-red-600 font-semibold text-sm";
+            }
         }
-        
+
+        document.getElementById('clienteForm').onsubmit = async function(e) {
+            e.preventDefault();
+            const data = Object.fromEntries(new FormData(this).entries());
+            const res = await fetch('/api/novo_cliente', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify(data)
+            });
+            const msg = await res.text();
+            document.getElementById('status').textContent = msg;
+        };
+
         document.addEventListener('DOMContentLoaded', () => {
-            const defaultTab = document.getElementById('Rotas');
-            if(defaultTab) {
-                defaultTab.style.display = 'block';
-            }
-            const defaultButton = document.getElementById('btnRotas');
-            if(defaultButton) {
-                defaultButton.classList.add('active');
-            }
-            
-            recalculateOptimization(); 
+            recalculateOptimization();
         });
     </script>
 </body>

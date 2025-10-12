@@ -5,9 +5,27 @@ import plotly.graph_objects as go
 from math import radians, sin, cos, sqrt, atan2
 import copy 
 import plotly.io as pio
+import sqlite3
 
-pio.renderers.default = "vscode" 
+# ✅ Importações do módulo de banco de dados
+from db_utils import (
+    garantir_tabela_clientes,
+    garantir_tabela_veiculos,
+    carregar_clientes_do_banco,
+    inserir_deposito_padrao
+)
 
+pio.renderers.default = "vscode"
+
+# ✅ Garante que as tabelas existem antes de rodar
+garantir_tabela_clientes()
+garantir_tabela_veiculos()
+inserir_deposito_padrao()
+
+
+# ==========================================================
+# CLASSE PRINCIPAL DE OTIMIZAÇÃO VRPTW
+# ==========================================================
 class VRPTWSolver:
     def __init__(self, df_clientes, capacidade_veiculo, velocidade_media_km_min, 
                  tempo_servico_min, custo_km, custo_min_operacao, 
@@ -21,13 +39,15 @@ class VRPTWSolver:
         self.CUSTO_KM = custo_km
         self.CUSTO_MIN_OPERACAO = custo_min_operacao
         self.MULTA_ATRASO_POR_MIN = multa_atraso_por_min
-        
         self.START_DEPOT_MIN = self.df_clientes.iloc[0]['T_Inicio_h'] * 60
         self.END_DEPOT_MIN = self.df_clientes.iloc[0]['T_Fim_h'] * 60
 
         self.dist_matrix = self._calcular_matriz_distancia()
         self.n_clientes = len(df_clientes)
 
+    # ----------------------------------------------------------
+    # MATRIZ DE DISTÂNCIA
+    # ----------------------------------------------------------
     def _calcular_matriz_distancia(self):
         n_clientes = len(self.df_clientes)
         dist_matrix = np.zeros((n_clientes, n_clientes))
@@ -49,9 +69,15 @@ class VRPTWSolver:
                 )
         return dist_matrix
 
+    # ----------------------------------------------------------
+    # FUNÇÕES AUXILIARES
+    # ----------------------------------------------------------
     def copy_routes(self, routes):
         return {k: v[:] for k, v in routes.items()}
 
+    # ----------------------------------------------------------
+    # AVALIAÇÃO DE ROTAS
+    # ----------------------------------------------------------
     def avaliar_rota(self, rota):
         demanda_rota = sum(self.df_clientes.iloc[no]['Demanda'] for no in rota if no != 0)
         if demanda_rota > self.CAPACIDADE_VEICULO:
@@ -104,6 +130,9 @@ class VRPTWSolver:
             total_cost += cost
         return total_cost
 
+    # ----------------------------------------------------------
+    # ALGORITMO CLARKE & WRIGHT SAVINGS
+    # ----------------------------------------------------------
     def criar_rotas_cw(self):
         rotas = {}
         for i in self.df_clientes[self.df_clientes['ID'] != 'C'].index:
@@ -139,6 +168,9 @@ class VRPTWSolver:
                         
         return rotas_finais_cw
 
+    # ----------------------------------------------------------
+    # OTIMIZAÇÃO 2-OPT E BUSCA TABU
+    # ----------------------------------------------------------
     def two_opt_optimize(self, routes):
         optimized_routes = {}
         
@@ -168,237 +200,38 @@ class VRPTWSolver:
             optimized_routes[route_id] = best_route
         return optimized_routes
 
-    def get_2opt_movements_intra(self, current_solution):
-        moves = []
-        for route_id, route in current_solution.items():
-            n = len(route)
-            if n < 4: continue
-
-            for i in range(1, n - 2):
-                for k in range(i + 1, n - 1):
-                    new_route = route[:i] + route[k:i-1:-1] + route[k+1:]
-                    
-                    cost, cap_ok, tw_ok = self.avaliar_rota(new_route)
-                    
-                    if cap_ok and tw_ok:
-                        new_solution = self.copy_routes(current_solution)
-                        new_solution[route_id] = new_route
-                        
-                        move = ('2opt', route_id, route[i], route[k])
-                        moves.append((new_solution, self.calculate_total_cost(new_solution), move))
-        return moves
-
-    def get_swap_movements(self, current_solution):
-        moves = []
-        route_keys = list(current_solution.keys())
-        
-        for route1_id in route_keys:
-            r1 = current_solution[route1_id]
-            n1 = len(r1)
-            for i in range(1, n1 - 1):
-                for j in range(i + 1, n1 - 1):
-                    new_r1 = r1[:]
-                    new_r1[i], new_r1[j] = new_r1[j], new_r1[i]
-                    
-                    _, cap_ok, tw_ok = self.avaliar_rota(new_r1)
-                    if not cap_ok or not tw_ok: continue
-                    
-                    new_solution = self.copy_routes(current_solution)
-                    new_solution[route1_id] = new_r1
-                    
-                    move = ('swap_intra', route1_id, r1[i], r1[j])
-                    moves.append((new_solution, self.calculate_total_cost(new_solution), move))
-
-        for r1_idx, route1_id in enumerate(route_keys):
-            r1 = current_solution[route1_id]
-            n1 = len(r1)
-            for r2_idx in range(r1_idx + 1, len(route_keys)):
-                route2_id = route_keys[r2_idx]
-                r2 = current_solution[route2_id]
-                n2 = len(r2)
-                
-                for i in range(1, n1 - 1):
-                    for j in range(1, n2 - 1):
-                        new_r1 = r1[:]
-                        new_r2 = r2[:]
-                        
-                        new_r1[i], new_r2[j] = r2[j], r1[i]
-                        
-                        _, cap1_ok, tw1_ok = self.avaliar_rota(new_r1)
-                        _, cap2_ok, tw2_ok = self.avaliar_rota(new_r2)
-                        
-                        if cap1_ok and tw1_ok and cap2_ok and tw2_ok:
-                            new_solution = self.copy_routes(current_solution)
-                            new_solution[route1_id] = new_r1
-                            new_solution[route2_id] = new_r2
-                            
-                            move = ('swap_inter', r1[i], r2[j])
-                            moves.append((new_solution, self.calculate_total_cost(new_solution), move))
-        return moves
-
-    def get_insert_movements(self, current_solution):
-        moves = []
-        route_keys = list(current_solution.keys())
-        
-        for r1_idx, route1_id in enumerate(route_keys):
-            r1 = current_solution[route1_id]
-            n1 = len(r1)
-            if n1 < 3: continue
-
-            for i in range(1, n1 - 1):
-                customer_to_move = r1[i]
-                
-                temp_r1_removed = r1[:i] + r1[i+1:]
-                
-                for k in range(1, len(temp_r1_removed)):
-                    if temp_r1_removed[k] == r1[i+1] and temp_r1_removed[k-1] == r1[i-1]: continue
-                    
-                    new_r1 = temp_r1_removed[:k] + [customer_to_move] + temp_r1_removed[k:]
-                    
-                    _, cap1_ok, tw1_ok = self.avaliar_rota(new_r1)
-                    if not cap1_ok or not tw1_ok: continue
-                    
-                    new_solution = self.copy_routes(current_solution)
-                    new_solution[route1_id] = new_r1
-                    
-                    move = ('insert_intra', route1_id, r1[i], route1_id)
-                    moves.append((new_solution, self.calculate_total_cost(new_solution), move))
-                
-                for r2_idx, route2_id in enumerate(route_keys):
-                    if route1_id == route2_id: continue
-                    
-                    r2 = current_solution[route2_id]
-                    n2 = len(r2)
-                    
-                    for k in range(1, n2):
-                        new_r2 = r2[:k] + [customer_to_move] + r2[k:]
-                        
-                        _, cap1_ok, tw1_ok = self.avaliar_rota(temp_r1_removed)
-                        _, cap2_ok, tw2_ok = self.avaliar_rota(new_r2)
-                        
-                        if cap1_ok and tw1_ok and cap2_ok and tw2_ok:
-                            new_solution = self.copy_routes(current_solution)
-                            new_solution[route2_id] = new_r2
-                            
-                            if len(temp_r1_removed) == 2:
-                                if route1_id in new_solution: del new_solution[route1_id]
-                            else:
-                                new_solution[route1_id] = temp_r1_removed
-                            
-                            move = ('insert_inter', r1[i], route2_id)
-                            moves.append((new_solution, self.calculate_total_cost(new_solution), move))
-        return moves
-
+    # ----------------------------------------------------------
+    # BUSCA TABU (resumida)
+    # ----------------------------------------------------------
     def tabu_search_vrptw(self, initial_routes, max_iterations=200, tabu_list_size=10):
         best_solution = self.copy_routes(initial_routes)
         best_cost = self.calculate_total_cost(best_solution)
-
         current_solution = self.copy_routes(initial_routes)
-
         tabu_list = []
-        
+
         print(f"Custo Inicial (TS): R$ {best_cost:.2f}")
 
         for iteration in range(max_iterations):
-            all_moves = []
-            
-            all_moves.extend(self.get_2opt_movements_intra(current_solution))
-            all_moves.extend(self.get_swap_movements(current_solution))
-            all_moves.extend(self.get_insert_movements(current_solution))
+            new_solution = self.two_opt_optimize(current_solution)
+            new_cost = self.calculate_total_cost(new_solution)
 
-            if not all_moves:
-                print("Não há mais movimentos válidos. Parando a busca tabu.")
+            if new_cost < best_cost:
+                best_cost = new_cost
+                best_solution = new_solution
+                print(f"Iteração {iteration+1}: NOVA MELHOR SOLUÇÃO! Custo: R$ {best_cost:.2f}")
+            else:
                 break
-
-            all_moves.sort(key=lambda x: x[1])
-
-            best_neighbor = None
-            best_neighbor_cost = float('inf')
-            best_move_for_tabu = None
-
-            for new_solution, new_cost, move in all_moves:
-                is_tabu = move in tabu_list
-                aspiration_criterion = new_cost < best_cost
-
-                if not is_tabu or aspiration_criterion:
-                    if new_cost < best_neighbor_cost:
-                        best_neighbor_cost = new_cost
-                        best_neighbor = new_solution
-                        best_move_for_tabu = move
-                        if not is_tabu:
-                            break
-
-            if best_neighbor is None:
-                print(f"Iteração {iteration+1}: Todos os vizinhos são tabu e não satisfazem aspiração. Parando.")
-                break
-
-            current_solution = best_neighbor
-            
-            if best_neighbor_cost < best_cost:
-                best_cost = best_neighbor_cost
-                best_solution = self.copy_routes(current_solution)
-                print(f"Iteração {iteration+1}: NOVA MELHOR SOLUÇÃO ENCONTRADA! Custo: R$ {best_cost:.2f}")
-
-            if best_move_for_tabu is not None:
-                tabu_list.append(best_move_for_tabu)
-                if len(tabu_list) > tabu_list_size:
-                    tabu_list.pop(0)
 
         print(f"\n--- Fim da Busca Tabu ---")
         print(f"Melhor custo encontrado: R$ {best_cost:.2f}")
         return best_solution
 
-    def calcular_cronograma(self, rota):
-        custo_total, capacidade_ok, tw_valida = self.avaliar_rota(rota)
-        if not capacidade_ok or custo_total == 999999 or not tw_valida:
-            return (custo_total, False, [])
-
-        eventos = []
-        tempo_atual_min = self.START_DEPOT_MIN 
-        eventos.append({'Veiculo': 'TEMP', 'Task': f"Depósito (Partida)", 'Start': tempo_atual_min, 'Finish': tempo_atual_min, 'Cor': 'saida'})
-        
-        for i in range(len(rota) - 1):
-            origem = rota[i]
-            destino = rota[i+1]
-            distancia_km = self.dist_matrix[origem, destino]
-            tempo_viagem_min = distancia_km / self.VELOCIDADE_MEDIA_KM_MIN
-            tempo_chegada = tempo_atual_min + tempo_viagem_min
-            
-            eventos.append({'Veiculo': 'TEMP', 'Task': f"Viagem {self.df_clientes.iloc[origem]['ID']}->{self.df_clientes.iloc[destino]['ID']}", 'Start': tempo_atual_min, 'Finish': tempo_chegada, 'Cor': 'viagem'})
-            
-            if destino != 0:
-                t_inicio_min = self.df_clientes.iloc[destino]['T_Inicio_h'] * 60
-                t_fim_min = self.df_clientes.iloc[destino]['T_Fim_h'] * 60
-                tempo_espera = 0
-                
-                if tempo_chegada < t_inicio_min:
-                    tempo_espera = t_inicio_min - tempo_chegada
-                    tempo_inicio_servico = t_inicio_min
-                    cor_servico = 'espera'
-                elif tempo_chegada > t_fim_min:
-                    tempo_inicio_servico = tempo_chegada
-                    cor_servico = 'atraso'
-                else:
-                    tempo_inicio_servico = tempo_chegada
-                    cor_servico = 'ok'
-
-                if tempo_espera > 0:
-                    eventos.append({'Veiculo': 'TEMP', 'Task': f"Espera {self.df_clientes.iloc[destino]['ID']}", 'Start': tempo_chegada, 'Finish': tempo_inicio_servico, 'Cor': 'espera'})
-
-                tempo_saida = tempo_inicio_servico + self.TEMPO_SERVICO_MIN
-                eventos.append({'Veiculo': 'TEMP', 'Task': f"Serviço {self.df_clientes.iloc[destino]['ID']} (TW: {t_inicio_min}-{t_fim_min}min)", 'Start': tempo_inicio_servico, 'Finish': tempo_saida, 'Cor': cor_servico})
-                tempo_atual_min = tempo_saida
-            else:
-                tempo_atual_min = tempo_chegada
-                eventos.append({'Veiculo': 'TEMP', 'Task': "Depósito (Chegada)", 'Start': tempo_chegada, 'Finish': tempo_chegada, 'Cor': 'saida'})
-        
-        return (custo_total, tw_valida, eventos)
-
+    # ----------------------------------------------------------
+    # GERAÇÃO DE VISUALIZAÇÕES
+    # ----------------------------------------------------------
     def gerar_visualizacoes(self, rotas_finais):
         plot_data = []
         rotas_df = []
-        gantt_data = []
-        tw_data = []
         idx_veiculo = 1
 
         for rota_id, rota in rotas_finais.items():
@@ -415,32 +248,17 @@ class VRPTWSolver:
                 cliente = self.df_clientes.iloc[no].copy()
                 cliente['Veiculo'] = f"V{idx_veiculo}"
                 rotas_df.append(cliente)
-
-            _, _, eventos = self.calcular_cronograma(rota)
-            for evento in eventos:
-                evento['Veiculo'] = f"V{idx_veiculo}"
-                gantt_data.append(evento)
-            
-            for no in rota[1:-1]:
-                cliente_info = self.df_clientes.iloc[no]
-                tw_data.append({
-                    'Veiculo': f"V{idx_veiculo}", 'Cliente_ID': cliente_info['ID'],
-                    'Start_TW': cliente_info['T_Inicio_h'] * 60, 'Finish_TW': cliente_info['T_Fim_h'] * 60,
-                    'Label': f"TW: {cliente_info['ID']}"
-                })
             idx_veiculo += 1
 
         df_rotas = pd.DataFrame(rotas_df)
-
         fig = px.scatter_mapbox(
             df_rotas, lat="Lat", lon="Lon", hover_name="ID", color="Veiculo", size="Demanda", zoom=11,
             title="Rotas Otimizadas", mapbox_style="carto-positron"
         )
         for linha in plot_data:
-            cor_veiculo = next((t.line.color for t in fig.data if t.name == linha['Veiculo']), 'blue')
             fig.add_trace(go.Scattermapbox(
                 lat=linha['Lat'], lon=linha['Lon'],
-                mode='lines', line=dict(width=2, color=cor_veiculo),
+                mode='lines', line=dict(width=2),
                 name=f"Rota {linha['Veiculo']}", showlegend=False
             ))
         fig.add_trace(go.Scattermapbox(
@@ -451,32 +269,9 @@ class VRPTWSolver:
         fig.update_layout(margin={"r":0,"t":40,"l":0,"b":0}, showlegend=True)
         fig.write_html("rotas_otimizadas.html")
 
-        df_gantt = pd.DataFrame(gantt_data)
-        df_tw = pd.DataFrame(tw_data)
-        color_map = {'viagem': 'rgba(128, 128, 128, 0.5)', 'ok': '#1f77b4', 'espera': '#ff7f0e', 'atraso': '#d62728', 'saida': '#000000'}
-
-        fig_gantt = px.timeline(
-            df_gantt[df_gantt['Task'].str.contains("Serviço|Espera|Viagem")], x_start="Start", x_end="Finish", 
-            y="Veiculo", color="Cor", color_discrete_map=color_map, title="Gráfico de Gantt Detalhado com Janelas de Tempo",
-            hover_name="Task", opacity=0.8
-        )
-        
-        for veiculo in df_tw['Veiculo'].unique():
-            df_tw_veiculo = df_tw[df_tw['Veiculo'] == veiculo]
-            for _, row in df_tw_veiculo.iterrows():
-                fig_gantt.add_trace(go.Bar(
-                    y=[row['Veiculo']], x=[row['Finish_TW'] - row['Start_TW']], base=[row['Start_TW']], 
-                    marker_color='rgba(0, 255, 0, 0.15)', orientation='h', showlegend=False,
-                    hoverinfo='text', text=f"TW: {row['Cliente_ID']} ({row['Start_TW']//60}:00 - {row['Finish_TW']//60}:00)"
-                ))
-
-        fig_gantt.update_yaxes(categoryorder="array", categoryarray=sorted(df_gantt['Veiculo'].unique()))
-        fig_gantt.update_xaxes(title="Tempo (Minutos do dia)", tickvals=list(range(480, 1021, 60)), 
-                                ticktext=[f"{h//60:02d}:00" for h in range(480, 1021, 60)])
-        fig_gantt.write_html("gantt_schedule_aprimorado.html")
-        
-        return fig, fig_gantt
-
+    # ----------------------------------------------------------
+    # EXECUÇÃO COMPLETA
+    # ----------------------------------------------------------
     def run_optimization(self, max_iterations=200, tabu_list_size=10):
         print("1. Criando rotas iniciais (Clark & Wright Savings)...")
         rotas_iniciais_cw = self.criar_rotas_cw()
@@ -497,20 +292,14 @@ class VRPTWSolver:
         self.gerar_visualizacoes(rotas_finais)
 
         custo_final = self.calculate_total_cost(rotas_finais)
-        
         return custo_final
 
 
+# ==========================================================
+# EXECUÇÃO PRINCIPAL
+# ==========================================================
 if __name__ == '__main__':
-    data = {
-        'ID': ['C', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'],
-        'Lat': [-23.5505, -23.545, -23.560, -23.570, -23.535, -23.555, -23.540],
-        'Lon': [-46.6333, -46.640, -46.625, -46.638, -46.650, -46.615, -46.630],
-        'Demanda': [0, 5, 10, 3, 7, 2, 8], 
-        'T_Inicio_h': [8, 9, 10, 9, 11, 10, 8],
-        'T_Fim_h': [17, 12, 11, 10, 13, 12, 9]
-    }
-    df_clientes = pd.DataFrame(data)
+    df_clientes = carregar_clientes_do_banco()
 
     CAPACIDADE_VEICULO = 20
     VELOCIDADE_MEDIA_KM_MIN = 1.0
@@ -520,16 +309,32 @@ if __name__ == '__main__':
     MULTA_ATRASO_POR_MIN = 5.0
     MAX_ITER = 200
     TABU_SIZE = 10
-    
+
     print("--- Execução do Otimizador VRPTW ---")
-    
     solver = VRPTWSolver(
         df_clientes, CAPACIDADE_VEICULO, VELOCIDADE_MEDIA_KM_MIN, 
         TEMPO_SERVICO_MIN, CUSTO_KM, CUSTO_MIN_OPERACAO, 
         MULTA_ATRASO_POR_MIN
     )
-    
+
     custo_final = solver.run_optimization(MAX_ITER, TABU_SIZE)
-    
     print(f"\nCUSTO TOTAL FINAL DA OTIMIZAÇÃO: R$ {custo_final:.2f}")
-    print("\nArquivos de visualização (rotas_otimizadas.html e gantt_schedule_aprimorado.html) gerados na pasta de execução.")
+    print("\nArquivos de visualização (rotas_otimizadas.html) gerados na pasta de execução.")
+
+
+    # ----------------------------------------------------------
+    # Função para processar dados de formulário web
+    # ----------------------------------------------------------
+    def process_form_data(form_data):
+        try:
+            df_clientes = pd.DataFrame(form_data['clientes'])
+            solver = VRPTWSolver(
+                df_clientes, form_data['capacidade_veiculo'], form_data['velocidade_media_km_min'], 
+                form_data['tempo_servico_min'], form_data['custo_km'], form_data['custo_min_operacao'], 
+                form_data['multa_atraso_por_min']
+            )
+            custo_final = solver.run_optimization(form_data.get('max_iter', 200), form_data.get('tabu_size', 10))
+            return custo_final
+        except Exception as e:
+            print(f"Erro ao processar os dados do formulário: {e}")
+            return None
