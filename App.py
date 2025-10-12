@@ -7,11 +7,7 @@ import copy
 import plotly.io as pio
 from flask import Flask, request, jsonify, render_template
 
-# Configuração do Plotly para gerar arquivos HTML
 pio.renderers.default = "browser"
-
-# --- CLASSE VRPTWSolver (Otimização) ---
-
 class VRPTWSolver:
     def __init__(self, df_clientes, capacidade_veiculo, velocidade_media_km_min, 
                  tempo_servico_min, custo_km, custo_min_operacao, 
@@ -57,7 +53,6 @@ class VRPTWSolver:
         return {k: v[:] for k, v in routes.items()}
 
     def avaliar_rota(self, rota):
-        # Esta função avalia custo, capacidade e TW
         demanda_rota = sum(self.df_clientes.iloc[no]['Demanda'] for no in rota if no != 0)
         if demanda_rota > self.CAPACIDADE_VEICULO:
             return (999999, False, False)
@@ -110,7 +105,6 @@ class VRPTWSolver:
         return total_cost
 
     def criar_rotas_cw(self):
-        # Implementação do Algoritmo de Economia (Clarke & Wright)
         rotas = {}
         for i in self.df_clientes[self.df_clientes['ID'] != 'C'].index:
             rotas[i] = [0, i, 0]
@@ -146,7 +140,6 @@ class VRPTWSolver:
         return rotas_finais_cw
 
     def two_opt_optimize(self, routes):
-        # Implementação do 2-opt (melhoria local)
         optimized_routes = {}
         
         for route_id, route in routes.items():
@@ -176,7 +169,6 @@ class VRPTWSolver:
         return optimized_routes
 
     def get_2opt_movements_intra(self, current_solution):
-        # Movimentos 2-opt intra-rota para a Busca Tabu
         moves = []
         for route_id, route in current_solution.items():
             n = len(route)
@@ -197,7 +189,6 @@ class VRPTWSolver:
         return moves
 
     def get_swap_movements(self, current_solution):
-        # Movimentos Swap (Intra e Inter-rota) para a Busca Tabu
         moves = []
         route_keys = list(current_solution.keys())
         
@@ -246,7 +237,6 @@ class VRPTWSolver:
         return moves
 
     def get_insert_movements(self, current_solution):
-        # Movimentos Insert (Intra e Inter-rota) para a Busca Tabu
         moves = []
         route_keys = list(current_solution.keys())
         
@@ -259,8 +249,7 @@ class VRPTWSolver:
                 customer_to_move = r1[i]
                 
                 temp_r1_removed = r1[:i] + r1[i+1:]
-                
-                # Insert Intra-Route
+
                 for k in range(1, len(temp_r1_removed)):
                     if temp_r1_removed[k] == r1[i+1] and temp_r1_removed[k-1] == r1[i-1]: continue
                     
@@ -275,7 +264,6 @@ class VRPTWSolver:
                     move = ('insert_intra', route1_id, r1[i], route1_id)
                     moves.append((new_solution, self.calculate_total_cost(new_solution), move))
                 
-                # Insert Inter-Route
                 for r2_idx, route2_id in enumerate(route_keys):
                     if route1_id == route2_id: continue
                     
@@ -302,7 +290,6 @@ class VRPTWSolver:
         return moves
 
     def tabu_search_vrptw(self, initial_routes, max_iterations=200, tabu_list_size=10):
-        # Implementação da Busca Tabu (Tabu Search)
         best_solution = self.copy_routes(initial_routes)
         best_cost = self.calculate_total_cost(best_solution)
 
@@ -353,7 +340,6 @@ class VRPTWSolver:
         return best_solution
 
     def calcular_cronograma(self, rota):
-        # Calcula os eventos (viagens, serviços, esperas) para o Gráfico de Gantt
         custo_total, capacidade_ok, tw_valida = self.avaliar_rota(rota)
         if not capacidade_ok or custo_total == 999999 or not tw_valida:
             return (custo_total, False, [])
@@ -400,7 +386,6 @@ class VRPTWSolver:
         return (custo_total, tw_valida, eventos)
 
     def gerar_visualizacoes(self, rotas_finais):
-        # Gera e salva os arquivos HTML do Mapa e do Gantt
         plot_data = []
         rotas_df = []
         gantt_data = []
@@ -438,7 +423,6 @@ class VRPTWSolver:
 
         df_rotas = pd.DataFrame(rotas_df)
 
-        # 1. Mapa de Rotas
         fig_mapa = px.scatter_mapbox(
             df_rotas, lat="Lat", lon="Lon", hover_name="ID", color="Veiculo", size="Demanda", zoom=11,
             title="Rotas Otimizadas", mapbox_style="carto-positron"
@@ -456,10 +440,8 @@ class VRPTWSolver:
             name="Depósito", hovertext=["Depósito"]
         ))
         fig_mapa.update_layout(margin={"r":0,"t":40,"l":0,"b":0}, showlegend=True)
-        # Salva o arquivo HTML
         fig_mapa.write_html("rotas_otimizadas.html", full_html=False, include_plotlyjs='cdn') 
 
-        # 2. Gráfico de Gantt
         df_gantt = pd.DataFrame(gantt_data)
         df_tw = pd.DataFrame(tw_data)
         color_map = {'viagem': 'rgba(128, 128, 128, 0.5)', 'ok': '#1f77b4', 'espera': '#ff7f0e', 'atraso': '#d62728', 'saida': '#000000'}
@@ -482,7 +464,6 @@ class VRPTWSolver:
         fig_gantt.update_yaxes(categoryorder="array", categoryarray=sorted(df_gantt['Veiculo'].unique()))
         fig_gantt.update_xaxes(title="Tempo (Minutos do dia)", tickvals=list(range(480, 1021, 60)), 
                                 ticktext=[f"{h//60:02d}:00" for h in range(480, 1021, 60)])
-        # Salva o arquivo HTML
         fig_gantt.write_html("gantt_schedule_aprimorado.html", full_html=False, include_plotlyjs='cdn')
         
         return fig_mapa, fig_gantt
@@ -500,11 +481,8 @@ class VRPTWSolver:
         
         return custo_final
 
-# --- CONFIGURAÇÃO DO FLASK E ROTEAMENTO ---
-
 app = Flask(__name__)
 
-# Dados de exemplo fixos
 data_clientes = {
     'ID': ['C', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'],
     'Lat': [-23.5505, -23.545, -23.560, -23.570, -23.535, -23.555, -23.540],
@@ -515,7 +493,6 @@ data_clientes = {
 }
 df_clientes = pd.DataFrame(data_clientes)
 
-# Parâmetros fixos para a TS
 TEMPO_SERVICO_MIN = 15
 CUSTO_MIN_OPERACAO = 1.0
 MULTA_ATRASO_POR_MIN = 5.0
@@ -531,7 +508,6 @@ def initialize_solver(capacity, speed, cost_km):
 
 @app.route('/')
 def index():
-    # Rota que executa a otimização inicial e carrega o HTML
     CAPACIDADE_VEICULO = 20
     VELOCIDADE_MEDIA_KM_MIN = 1.0
     CUSTO_KM = 0.5
@@ -546,7 +522,6 @@ def index():
 
 @app.route('/optimize', methods=['POST'])
 def optimize():
-    # Rota que é chamada pelo JavaScript do dashboard para recalcular
     data = request.json
     try:
         capacity = data.get('capacity')
@@ -573,7 +548,6 @@ def optimize():
         }), 400
 
 if __name__ == '__main__':
-    # Cria a pasta 'templates' e coloca o dashboard.html nela antes de rodar!
     print("\n--- INICIANDO SERVIDOR FLASK ---")
     print("Acesse: http://127.0.0.1:5000/")
     app.run(debug=False)

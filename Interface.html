@@ -6,7 +6,6 @@
     <title>Dashboard de Otimização de Rotas (VRPTW)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* Estilos Customizados para o Iframe e Abas */
         body {
             font-family: 'Inter', sans-serif;
         }
@@ -14,22 +13,19 @@
             display: none;
             min-height: 80vh;
         }
-        /* O estilo inline 'display: block;' no HTML inicial será reconhecido */
         .tab-button {
             border-bottom: 3px solid transparent;
         }
         .tab-button.active {
-            color: #1d4ed8; /* Cor azul forte (blue-700) */
+            color: #1d4ed8;
             border-bottom: 3px solid #1d4ed8;
             font-weight: 700;
         }
         iframe {
-             /* Garante que o iframe ocupe o espaço vertical corretamente */
             height: calc(100vh - 180px); 
         }
     </style>
     <script>
-        // Configuração do Tailwind (mantida para garantir a fonte)
         tailwind.config = {
             theme: {
                 extend: {
@@ -93,9 +89,7 @@
     </div>
 
     <script>
-        // -------------------------
-        // FUNÇÕES DE NAVEGAÇÃO
-        // -------------------------
+
         function openTab(evt, tabName) {
             let i, tabContent, tabButton;
 
@@ -113,9 +107,6 @@
             evt.currentTarget.classList.add("active");
         }
 
-        // -------------------------
-        // FUNÇÃO DE INTERATIVIDADE (CHAMADA FLASK)
-        // -------------------------
         function recalculateOptimization() {
             const capacity = document.getElementById('capacity').value;
             const speed = document.getElementById('speed').value;
@@ -134,7 +125,6 @@
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                // Garante que os valores sejam numéricos ao enviar para o Python
                 body: JSON.stringify({ capacity: Number(capacity), speed: Number(speed), cost_km: Number(cost_km) })
             })
             .then(response => {
@@ -147,12 +137,10 @@
                 optimizeButton.disabled = false; 
 
                 if (data.status === 'success') {
-                    // 1. Atualiza o status com o custo final
                     statusElement.textContent = `✅ Sucesso! Novo Custo Final: ${data.final_cost}. Atualizando gráficos...`;
                     statusElement.classList.remove('text-blue-600');
                     statusElement.classList.add('text-green-600');
                     
-                    // 2. Força a recarga dos IFrames (Bypass de Cache)
                     setTimeout(() => {
                         const newTimestamp = new Date().getTime();
                         
@@ -162,7 +150,6 @@
                         const ganttFrame = document.getElementById('ganttFrame');
                         ganttFrame.src = 'gantt_schedule_aprimorado.html?' + newTimestamp;
                         
-                        // Mensagem final
                         setTimeout(() => {
                             statusElement.textContent = `Último Custo Calculado: ${data.final_cost}`;
                             statusElement.classList.remove('text-green-600');
@@ -186,11 +173,7 @@
             });
         }
         
-        // -------------------------
-        // EXECUÇÃO INICIAL
-        // -------------------------
         document.addEventListener('DOMContentLoaded', () => {
-            // Garante que a primeira aba esteja visível e ativa
             const defaultTab = document.getElementById('Rotas');
             if(defaultTab) {
                 defaultTab.style.display = 'block';
@@ -200,7 +183,6 @@
                 defaultButton.classList.add('active');
             }
             
-            // EXECUTA A OTIMIZAÇÃO AUTOMATICAMENTE NA CARGA INICIAL
             recalculateOptimization(); 
         });
     </script>
