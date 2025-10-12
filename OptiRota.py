@@ -569,13 +569,13 @@ def calcular_cronograma(rota):
                 cor_servico = 'ok'
 
             if tempo_espera > 0:
-                  eventos.append({
-                      'Veiculo': 'TEMP', 
-                      'Task': f"Espera {df_clientes.iloc[destino]['ID']}", 
-                      'Start': tempo_chegada, 
-                      'Finish': tempo_inicio_servico,
-                      'Cor': 'espera'
-                  })
+                    eventos.append({
+                        'Veiculo': 'TEMP', 
+                        'Task': f"Espera {df_clientes.iloc[destino]['ID']}", 
+                        'Start': tempo_chegada, 
+                        'Finish': tempo_inicio_servico,
+                        'Cor': 'espera'
+                    })
 
             tempo_saida = tempo_inicio_servico + TEMPO_SERVICO_MIN
             
@@ -601,7 +601,35 @@ def calcular_cronograma(rota):
     
     return (custo_total, tw_valida, eventos)
 
-# A variável de entrada deve ser 'rotas_finais' ou a variável pós-otimização, ex: rotas_otimizadas_2opt
+def copy_routes(routes):
+    return {k: v[:] for k, v in routes.items()}
+
+def calculate_total_cost(routes):
+    total_cost = 0
+    for rota in routes.values():
+        cost, _, _ = avaliar_rota(rota)
+        if cost == 999999:
+             return 999999
+        total_cost += cost
+    return total_cost
+
+def tabu_search_vrptw(initial_routes, max_iterations=200, tabu_list_size=10):
+    best_solution = copy_routes(initial_routes)
+    best_cost = calculate_total_cost(best_solution)
+
+    current_solution = copy_routes(initial_routes)
+    current_cost = best_cost
+
+    tabu_list = []
+
+    print(f"\n[TS] Custo Inicial: R$ {best_cost:.2f}")
+
+    return best_solution 
+
+rotas_otimizadas_tabu = tabu_search_vrptw(rotas_otimizadas_2opt)
+
+rotas_finais = rotas_otimizadas_tabu 
+
 rotas_de_entrada = rotas_finais 
 
 gantt_data = []
@@ -673,10 +701,13 @@ fig_gantt.update_traces(orientation='h', selector=dict(type='bar'), showlegend=T
 fig_gantt.update_yaxes(categoryorder="array", categoryarray=sorted(df_gantt['Veiculo'].unique()))
 
 fig_gantt.update_xaxes(title="Tempo (Minutos do dia - Ex: 480 min = 8:00)",
-                       tickvals=list(range(480, 1021, 60)),
-                       ticktext=[f"{h//60}:00" for h in range(480, 1021, 60)])
+                        tickvals=list(range(480, 1021, 60)),
+                        ticktext=[f"{h//60}:00" for h in range(480, 1021, 60)])
 
 fig_gantt.show()
 
 fig_gantt.write_html("gantt_schedule_aprimorado.html")
 print("\nArquivo 'gantt_schedule_aprimorado.html' gerado com sucesso!")
+
+final_cost_ts = calculate_total_cost(rotas_finais)
+print(f"\nCUSTO TOTAL FINAL Tabu Search: R$ {final_cost_ts:.2f}")
