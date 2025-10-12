@@ -3,144 +3,264 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard de Otimização de Rotas (VRPTW)</title>
+    <title>OptiRota - Dashboard VRPTW</title>
+    <script src="https://cdn.plotly.com/plotly-latest.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
-        }
-        .tab-content { display: none; min-height: 80vh; }
-        .tab-button { border-bottom: 3px solid transparent; }
-        .tab-button.active {
-            color: #1d4ed8;
-            border-bottom: 3px solid #1d4ed8;
-            font-weight: 700;
-        }
-        iframe { height: calc(100vh - 180px); }
+        body { margin: 0; font-family: Arial, sans-serif; background: #f3f4f6; }
+        .parameter-bar { position: fixed; top: 0; left: 0; right: 0; background: #fff; padding: 12px 18px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); z-index: 50; display:flex; gap:12px; align-items:center; }
+    /* leave space on the right for the form-aside (reduced width) */
+    /* dynamic main-area padding: small when aside closed, larger when open */
+    .main-area { padding: 88px 24px 24px 24px; transition: padding-right 0.25s ease; }
+    body.aside-open .main-area { padding-right: 260px; }
+        .floating-menu { position: fixed; left: 24px; bottom: 24px; background: rgba(255,255,255,0.0); z-index: 2000; display:flex; gap:8px; }
+        .floating-menu button { background:#ffb300; color:#222; border:none; border-radius:50%; width:44px; height:44px; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,0.1); display:flex; align-items:center; justify-content:center; }
+        .floating-menu button:hover { background:#222; color:#ffb300; }
+        .map-frame, #ganttChart { width:100%; height:calc(100vh - 180px); border: none; border-radius:8px; box-shadow: 0 6px 18px rgba(0,0,0,0.08); }
+    aside.form-aside { position: fixed; right: 0; top: 72px; width: 220px; height: calc(100% - 72px); background: #ffffff; padding: 14px; box-shadow: -6px 0 18px rgba(0,0,0,0.06); overflow:auto; z-index:60; transition: transform 0.25s ease; transform: translateX(0); }
+    aside.form-aside.closed { transform: translateX(100%); }
+
+    /* toggle button that stays visible to open/close the aside */
+    .aside-toggle { position: fixed; right: 12px; top: 50%; transform: translateY(-50%); width:36px; height:36px; border-radius:8px; background:#ffffff; box-shadow:0 2px 8px rgba(0,0,0,0.12); z-index:70; display:flex; align-items:center; justify-content:center; cursor:pointer; border: none; }
+    body.aside-open .aside-toggle { right: 232px; }
+        .hidden { display:none; }
+
+        /* Loader overlay */
+        #loaderOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display:flex; align-items:center; justify-content:center; z-index:3000; visibility: hidden; opacity: 0; transition: opacity 0.2s, visibility 0.2s; }
+        #loaderOverlay.visible { visibility: visible; opacity: 1; }
+        .spinner { width:72px; height:72px; border-radius:50%; border:8px solid rgba(255,255,255,0.2); border-top-color: #fff; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
-<body class="bg-gray-100 text-gray-800">
+<body>
 
-    <div id="parameter-bar" class="bg-white p-4 shadow-md flex flex-wrap justify-between items-center gap-4">
-        <h3 class="text-lg font-semibold text-gray-700">Parâmetros de Simulação:</h3>
-        
-        <div class="flex flex-wrap items-center gap-4">
-            <label class="flex flex-col text-sm font-medium text-gray-600">
-                Capacidade (un.):
-                <input type="number" id="capacity" value="20" min="1" class="mt-1 p-2 border border-gray-300 rounded-md w-24 focus:ring-blue-500 focus:border-blue-500">
-            </label>
-            
-            <label class="flex flex-col text-sm font-medium text-gray-600">
-                Velocidade (km/min):
-                <input type="number" id="speed" value="1.0" step="0.1" class="mt-1 p-2 border border-gray-300 rounded-md w-24 focus:ring-blue-500 focus:border-blue-500">
-            </label>
-            
-            <label class="flex flex-col text-sm font-medium text-gray-600">
-                Custo/km (R$):
-                <input type="number" id="cost_km" value="0.5" step="0.1" class="mt-1 p-2 border border-gray-300 rounded-md w-24 focus:ring-blue-500 focus:border-blue-500">
-            </label>
-            
-            <button onclick="recalculateOptimization()" class="mt-auto bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-200">
-                Recalcular e Atualizar
-            </button>
-        </div>
-        
-        <span id="statusMessage" class="text-blue-600 font-semibold text-sm">Aguardando a primeira otimização...</span>
-    </div>
-    
-    <div class="tab-menu bg-white px-4 shadow-lg flex items-center border-b-2 border-gray-200 mt-1">
-        <h2 class="text-xl font-bold text-gray-800 py-3 flex-grow">Dashboard VRPTW</h2>
-        
-        <button id="btnRotas" class="tab-button py-3 px-6 text-gray-500 font-medium transition duration-200 hover:text-blue-700" onclick="openTab(event, 'Rotas')">
-            🗺️ Mapa de Rotas Otimizadas
-        </button>
-        <button id="btnGantt" class="tab-button py-3 px-6 text-gray-500 font-medium transition duration-200 hover:text-blue-700" onclick="openTab(event, 'Gantt')">
-            ⏱️ Gráfico de Gantt (Cronograma)
-        </button>
+    <div class="parameter-bar">
+        <label>Capacidade: <input id="capacity" type="number" value="20" min="1" class="ml-2 p-1 border rounded w-20"></label>
+        <label>Velocidade (km/min): <input id="speed" type="number" value="1.0" step="0.1" class="ml-2 p-1 border rounded w-20"></label>
+        <label>Custo/km: <input id="cost_km" type="number" value="0.5" step="0.1" class="ml-2 p-1 border rounded w-20"></label>
+        <button onclick="recalculateOptimization()" class="ml-4 bg-green-600 text-white px-3 py-1 rounded">Recalcular</button>
+        <div id="statusMessage" style="margin-left:12px;color:#2563eb;font-weight:600">Aguardando otimização...</div>
     </div>
 
-    <div class="tab-container p-4">
-        
-        <div id="Rotas" class="tab-content bg-white p-2 rounded-xl shadow-xl border border-gray-200" style="display: block;">
-            <iframe id="mapFrame" src="/rotas_otimizadas" class="w-full rounded-lg"></iframe> 
+    <div class="floating-menu" aria-label="Menu flutuante">
+        <button id="btnMap" onclick="showIframe('rotas')" title="Mapa">🗺️</button>
+        <button id="btnGantt" onclick="showIframe('gantt')" title="Gantt">📊</button>
+    </div>
+
+    <div class="main-area">
+        <div id="rotas">
+            <iframe id="mapFrame" class="map-frame" src="rotas_otimizadas.html"></iframe>
         </div>
 
-        <div id="Gantt" class="tab-content bg-white p-2 rounded-xl shadow-xl border border-gray-200">
-            <iframe id="ganttFrame" src="/gantt_schedule" class="w-full rounded-lg"></iframe>
+        <div id="gantt" class="hidden">
+            <div id="ganttChart" class="gantt-frame"></div>
         </div>
     </div>
 
-    <aside style="position:fixed; right:0; top:0; width:300px; height:100%; background:#f4f4f4; padding:20px; box-shadow:-2px 0 5px rgba(0,0,0,0.1);">
-      <h2>Adicionar Cliente</h2>
-      <form id="clienteForm">
-        <label>ID: <input name="ID" required></label><br>
-        <label>Lat: <input name="Lat" type="number" step="any" required></label><br>
-        <label>Lon: <input name="Lon" type="number" step="any" required></label><br>
-        <label>Demanda: <input name="Demanda" type="number" required></label><br>
-        <label>Início (h): <input name="T_Inicio_h" type="number" required></label><br>
-        <label>Fim (h): <input name="T_Fim_h" type="number" required></label><br>
-        <button type="submit">Enviar</button>
-      </form>
-      <div id="status"></div>
+    <aside class="form-aside">
+        <h3 style="margin-top:0">Adicionar Cliente</h3>
+        <form id="clienteForm">
+            <label class="block">ID:<input name="ID" required class="w-full p-2 border rounded mt-1"></label>
+            <label class="block">Lat:<input name="Lat" type="number" step="any" required class="w-full p-2 border rounded mt-2"></label>
+            <label class="block">Lon:<input name="Lon" type="number" step="any" required class="w-full p-2 border rounded mt-2"></label>
+            <label class="block">Demanda:<input name="Demanda" type="number" required class="w-full p-2 border rounded mt-2"></label>
+            <label class="block">Início (h):<input name="T_Inicio_h" type="number" step="0.5" required class="w-full p-2 border rounded mt-2"></label>
+            <label class="block">Fim (h):<input name="T_Fim_h" type="number" step="0.5" required class="w-full p-2 border rounded mt-2"></label>
+            <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded mt-4">Adicionar e Recalcular</button>
+        </form>
+        <div id="status" style="margin-top:12px"></div>
     </aside>
 
+    <div id="loaderOverlay" role="status" aria-hidden="true">
+        <div style="text-align:center;color:#fff">
+            <div class="spinner"></div>
+            <div style="margin-top:12px;font-weight:600;color:#fff">Otimizando rotas...</div>
+        </div>
+    </div>
+
+    <!-- Aside toggle button -->
+    <button id="asideToggle" class="aside-toggle" aria-label="Abrir painel" title="Abrir/Fechar painel">&#9776;</button>
+
     <script>
-        function openTab(evt, tabName) {
-            document.querySelectorAll(".tab-content").forEach(el => el.style.display = "none");
-            document.querySelectorAll(".tab-button").forEach(el => el.classList.remove("active"));
-            document.getElementById(tabName).style.display = "block";
-            evt.currentTarget.classList.add("active");
+        // Variável global para armazenar os dados de agendamento mais recentes
+        window._lastSchedule = null;
+
+        function showLoader() { 
+            const o = document.getElementById('loaderOverlay'); 
+            o.classList.add('visible'); 
+            o.setAttribute('aria-hidden','false'); 
+        }
+        function hideLoader() { 
+            const o = document.getElementById('loaderOverlay'); 
+            o.classList.remove('visible'); 
+            o.setAttribute('aria-hidden','true'); 
+        }
+
+        function showIframe(type) {
+            document.getElementById('rotas').style.display = (type === 'rotas') ? 'block' : 'none';
+            document.getElementById('gantt').classList.toggle('hidden', type !== 'gantt');
+            
+            // Lógica essencial para o Plotly
+            if (type === 'gantt' && window.Plotly) {
+                // 1. Re-plotar o gráfico com os dados mais recentes (se houver)
+                // Isso força o Plotly a desenhar no contêiner que acabou de se tornar visível.
+                updateGanttChart(window._lastSchedule);
+
+                // 2. Tentar garantir o redimensionamento após um pequeno atraso
+                setTimeout(() => {
+                    try { 
+                        const container = document.getElementById('ganttChart'); 
+                        Plotly.Plots.resize(container); 
+                        console.debug('Gantt forced resize successful.');
+                    } catch(e) { /* ignore */ }
+                }, 100);
+            }
+        }
+
+        function updateGanttChart(scheduleData) {
+            console.debug('updateGanttChart called, scheduleData:', scheduleData);
+            
+            // Dados Mockados de Exemplo (Fallback)
+            const mockScheduleData = [
+                { color: '#1f77b4', stops: [ { id: 'Depot', start_time: 0, end_time: 0 }, { id: 'C1', start_time: 2.5, end_time: 3.0 }, { id: 'C3', start_time: 6.0, end_time: 7.0 }, { id: 'Depot', start_time: 10.0, end_time: 10.0 } ] },
+                { color: '#ff7f0e', stops: [ { id: 'Depot', start_time: 0, end_time: 0 }, { id: 'C2', start_time: 4.0, end_time: 5.0 }, { id: 'C4', start_time: 8.0, end_time: 9.5 }, { id: 'Depot', start_time: 12.0, end_time: 12.0 } ] }
+            ];
+
+            const dataSource = Array.isArray(scheduleData) && scheduleData.length ? scheduleData : mockScheduleData;
+
+            const traces = dataSource.flatMap((route, i) => {
+                let currentTime = 0;
+                const vehicleId = `Veículo ${i + 1}`;
+                const traces_veiculo = [];
+                
+                route.stops.forEach((stop, index) => {
+                    const waitTime = stop.start_time - currentTime;
+                    if (waitTime > 0 && index > 0) {
+                        traces_veiculo.push({
+                            y: [vehicleId], x: [waitTime], name: 'Viagem/Espera',
+                            marker: { color: 'rgba(200, 200, 200, 0.5)' }, 
+                            hoverinfo: 'name+x', type: 'bar', orientation: 'h', legendgroup: 'Viagem',
+                            showlegend: i === 0 && index === 1
+                        });
+                    }
+
+                    const serviceTime = stop.end_time - stop.start_time;
+                    if (serviceTime > 0) {
+                        traces_veiculo.push({
+                            y: [vehicleId], x: [serviceTime], name: `Serviço ${stop.id}`,
+                            marker: { color: route.color }, 
+                            hoverinfo: 'name+x', type: 'bar', orientation: 'h', legendgroup: 'Serviço',
+                            showlegend: stop.id === 'C1' 
+                        });
+                    }
+                    currentTime = stop.end_time;
+                });
+                return traces_veiculo;
+            });
+
+            const container = document.getElementById('ganttChart');
+            try { if (window.Plotly) Plotly.purge(container); } catch(e) { /* ignore */ }
+            let h = container.offsetHeight || (container.parentElement && container.parentElement.offsetHeight) || 600;
+
+            const layout = {
+                title: 'Cronograma de Rotas (Gráfico de Gantt Plotly)',
+                barmode: 'stack', 
+                xaxis: { title: 'Tempo (horas)', showgrid: true, rangemode: 'nonnegative' },
+                yaxis: { title: 'Rota/Veículo', autorange: 'reversed' },
+                showlegend: true,
+                height: h,
+                margin: { l: 100, r: 20, t: 50, b: 50 }
+            };
+
+            if (!traces || traces.length === 0) {
+                const placeholder = [{ x: [1], y: ['Nenhuma rota'], type: 'bar', marker: { color: '#e6e6e6' } }];
+                const placeholderLayout = Object.assign({}, layout, { title: 'Nenhum dado de Gantt disponível após a otimização' });
+                Plotly.newPlot(container, placeholder, placeholderLayout);
+                return;
+            }
+
+            // (re)desenha o gráfico
+            Plotly.newPlot(container, traces, layout).then(() => {
+                // Tenta garantir o redimensionamento logo após a plotagem
+                try { Plotly.Plots.resize(container); } catch(e) { /* ignore */ }
+            });
         }
 
         async function recalculateOptimization() {
-            const params = {
-                capacity: Number(document.getElementById('capacity').value),
-                speed: Number(document.getElementById('speed').value),
-                cost_km: Number(document.getElementById('cost_km').value)
-            };
+            const params = { capacity: Number(document.getElementById('capacity').value), speed: Number(document.getElementById('speed').value), cost_km: Number(document.getElementById('cost_km').value) };
             const statusEl = document.getElementById('statusMessage');
-            statusEl.textContent = "⚙️ Otimizando rotas...";
-            statusEl.className = "text-blue-600 font-semibold text-sm";
-
+            statusEl.textContent = '⚙️ Otimizando...';
+            showLoader();
             try {
-                const res = await fetch('/optimize', {
-                    method: 'POST',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify(params)
-                });
+                const res = await fetch('/optimize', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(params) });
                 const data = await res.json();
-
+                
                 if (data.status === 'success') {
-                    statusEl.textContent = `✅ Custo final: R$ ${data.final_cost.toFixed(2)} — gráficos atualizados.`;
-                    statusEl.className = "text-green-600 font-semibold text-sm";
-                    const t = new Date().getTime();
-                    document.getElementById('mapFrame').src = '/rotas_otimizadas?t='+t;
-                    document.getElementById('ganttFrame').src = '/gantt_schedule?t='+t;
+                    statusEl.textContent = `✅ Custo final: R$ ${data.final_cost.toFixed(2)}`;
+                    
+                    // Atualiza o mapa (iframe)
+                    document.getElementById('mapFrame').src = 'rotas_otimizadas.html?t=' + Date.now();
+                    
+                    // Armazena os dados de agendamento mais recentes
+                    window._lastSchedule = (data.schedule && Array.isArray(data.schedule)) ? data.schedule : null;
+
+                    // Se a aba Gantt estiver visível, atualize imediatamente
+                    if (document.getElementById('gantt').style.display !== 'none' && !document.getElementById('gantt').classList.contains('hidden')) {
+                         updateGanttChart(window._lastSchedule);
+                    }
+
                 } else {
-                    statusEl.textContent = "❌ Erro: " + data.message;
-                    statusEl.className = "text-red-600 font-semibold text-sm";
+                    statusEl.textContent = '❌ Erro: ' + data.message;
                 }
             } catch (err) {
-                statusEl.textContent = "❌ Falha na conexão: " + err.message;
-                statusEl.className = "text-red-600 font-semibold text-sm";
+                statusEl.textContent = '❌ Erro de conexão com o backend.';
+            } finally {
+                setTimeout(hideLoader, 400);
             }
         }
 
         document.getElementById('clienteForm').onsubmit = async function(e) {
             e.preventDefault();
             const data = Object.fromEntries(new FormData(this).entries());
-            const res = await fetch('/api/novo_cliente', {
-                method: 'POST',
-                headers: {'Content-Type':'application/json'},
-                body: JSON.stringify(data)
-            });
-            const msg = await res.text();
-            document.getElementById('status').textContent = msg;
+            const statusAside = document.getElementById('status');
+            statusAside.textContent = 'Enviando...';
+            try {
+                const res = await fetch('/api/novo_cliente', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+                const msg = await res.text();
+                statusAside.textContent = msg;
+                if (!msg.startsWith('Erro')) {
+                    recalculateOptimization();
+                }
+            } catch (err) {
+                statusAside.textContent = 'Erro ao enviar cliente.';
+            }
         };
 
-        document.addEventListener('DOMContentLoaded', () => {
-            recalculateOptimization();
+        // inicial: mostra mapa e dispara a primeira otimização
+        window.addEventListener('DOMContentLoaded', function() {
+            showIframe('rotas');
+            try { recalculateOptimization(); } catch(e) { console.warn('Falha ao iniciar otimização automaticamente:', e); }
         });
+
+        // Aside open/close controls
+        const aside = document.querySelector('aside.form-aside');
+        const asideToggle = document.getElementById('asideToggle');
+        function openAside() {
+            aside.classList.remove('closed');
+            document.body.classList.add('aside-open');
+            asideToggle.innerHTML = '&#10006;'; // X
+            asideToggle.setAttribute('aria-label','Fechar painel');
+        }
+        function closeAside() {
+            aside.classList.add('closed');
+            document.body.classList.remove('aside-open');
+            asideToggle.innerHTML = '&#9776;'; // ☰
+            asideToggle.setAttribute('aria-label','Abrir painel');
+        }
+        function toggleAside() { if (aside.classList.contains('closed')) openAside(); else closeAside(); }
+        asideToggle.addEventListener('click', toggleAside);
+        // start with aside open by default
+        openAside();
     </script>
 </body>
 </html>
