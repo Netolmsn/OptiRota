@@ -1,7 +1,12 @@
 import sqlite3
 import pandas as pd
 
-def garantir_tabela_clientes(db_path='clientes.db'):
+DB_PATH = 'clientes.db'
+
+# ==========================================================
+# Garantir e inicializar a tabela
+# ==========================================================
+def garantir_tabela_clientes(db_path=DB_PATH):
     """Garante que a tabela 'clientes' existe e insere o depósito padrão."""
     conn = sqlite3.connect(db_path)
     conn.execute('''
@@ -14,13 +19,20 @@ def garantir_tabela_clientes(db_path='clientes.db'):
         T_Fim_h REAL
     )
     ''')
-    # Insere o depósito (ID 'C') se não existir
-    conn.execute("INSERT OR IGNORE INTO clientes VALUES ('C', -23.5505, -46.6333, 0, 8.0, 17.0)")
+    # Insere o depósito padrão (ID 'C') se não existir
+    conn.execute("""
+        INSERT OR IGNORE INTO clientes (ID, Lat, Lon, Demanda, T_Inicio_h, T_Fim_h)
+        VALUES ('C', -23.5505, -46.6333, 0, 8.0, 17.0)
+    """)
     conn.commit()
     conn.close()
 
-def inserir_clientes(db_path='clientes.db'):
-    """Insere dados de exemplo na tabela de clientes, substituindo se já existirem."""
+
+# ==========================================================
+# Inserir dados iniciais (C1 a C10)
+# ==========================================================
+def inserir_clientes(db_path=DB_PATH):
+    """Insere dados de exemplo (clientes de C1 a C10)."""
     conn = sqlite3.connect(db_path)
     clientes = [
         ('C1', -23.545, -46.640, 5, 9.0, 12.0),
@@ -34,22 +46,57 @@ def inserir_clientes(db_path='clientes.db'):
         ('C9', -23.552, -46.637, 9, 8.0, 11.0),
         ('C10', -23.538, -46.628, 5, 9.0, 12.0)
     ]
-    # Usamos INSERT OR REPLACE para atualizar se o cliente já existir
+
     for cliente in clientes:
-        conn.execute("INSERT OR REPLACE INTO clientes VALUES (?, ?, ?, ?, ?, ?)", cliente)
+        conn.execute("""
+            INSERT OR REPLACE INTO clientes (ID, Lat, Lon, Demanda, T_Inicio_h, T_Fim_h)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, cliente)
     conn.commit()
     conn.close()
 
-def carregar_clientes_do_banco(db_path='clientes.db'):
-    """Carrega todos os clientes (incluindo o depósito) do banco de dados para um DataFrame."""
+
+# ==========================================================
+# Carregar todos os clientes
+# ==========================================================
+def carregar_clientes_do_banco(db_path=DB_PATH):
+    """Carrega todos os clientes do banco de dados."""
     conn = sqlite3.connect(db_path)
-    # Ordena por ID decrescente para garantir que o depósito ('C') não seja sempre o índice 0
-    df = pd.read_sql_query("SELECT * FROM clientes ORDER BY ID DESC", conn)
+    df = pd.read_sql_query("SELECT * FROM clientes ORDER BY ID", conn)
     conn.close()
     return df
 
+
+# ==========================================================
+# Salvar novo cliente (usado pela rota /api/adicionar_cliente)
+# ==========================================================
+def salvar_cliente_no_banco(cliente, db_path=DB_PATH):
+    """Insere um novo cliente (exceto depósito 'C') no banco."""
+    conn = sqlite3.connect(db_path)
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS clientes (
+            ID TEXT PRIMARY KEY,
+            Lat REAL,
+            Lon REAL,
+            Demanda INTEGER,
+            T_Inicio_h REAL,
+            T_Fim_h REAL
+        )
+    ''')
+    if cliente['ID'] == 'C':
+        raise ValueError("ID 'C' é reservado para o depósito principal.")
+    conn.execute("""
+        INSERT OR REPLACE INTO clientes (ID, Lat, Lon, Demanda, T_Inicio_h, T_Fim_h)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (cliente['ID'], cliente['Lat'], cliente['Lon'], cliente['Demanda'], cliente['T_Inicio_h'], cliente['T_Fim_h']))
+    conn.commit()
+    conn.close()
+
+
+# ==========================================================
+# Execução isolada (para testes)
+# ==========================================================
 if __name__ == '__main__':
-    # Bloco para testar o banco de dados separadamente (opcional)
     garantir_tabela_clientes()
     inserir_clientes()
-    print("Banco de dados 'clientes.db' configurado com sucesso.")
+    print("✅ Banco de dados 'clientes.db' configurado com sucesso.")
